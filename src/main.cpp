@@ -131,7 +131,7 @@ void blelloch_scan(vector<T>& in) {
 }
 
 int main() {
-    const size_t N = 1 << 28;
+    const size_t N = 1 << 24;
     
     vector<int64_t> input_vector(N);
 
@@ -164,17 +164,17 @@ int main() {
     chrono::duration<double> seq_time_min = end_seq_min - start_seq_min;
 
     cout << "Minumum element of all elements is equal: " << seq_min << endl;
-    cout << "Execution time for max reduction sequential method: " << seq_time_min.count() * 1000 << "ms" << endl << endl;
+    cout << "Execution time for min reduction sequential method: " << seq_time_min.count() * 1000 << "ms" << endl << endl;
 
     
-    // MIN - SEKWENCYJNIE
+    // MAX - SEKWENCYJNIE
     const auto start_seq_max = chrono::high_resolution_clock::now();
     auto seq_max = sequential_max(input_vector);
     const auto end_seq_max = chrono::high_resolution_clock::now();
     chrono::duration<double> seq_time_max = end_seq_max - start_seq_max;
 
     cout << "Maximum element of all elements is equal: " << seq_max << endl;
-    cout << "Execution time for min reduction sequential method: " << seq_time_max.count() * 1000 << "ms" << endl << endl;
+    cout << "Execution time for max reduction sequential method: " << seq_time_max.count() * 1000 << "ms" << endl << endl;
 
     // PREFIX-SUM - SEKWENCYJNIE
     const auto start_seq_prefixsum = chrono::high_resolution_clock::now();
