@@ -5,10 +5,12 @@
 #include <algorithm>
 #include <limits>
 #include <chrono>
+#include <fstream>
+#include <cmath>
+#include <string>
 
 using namespace std;
 
-// Sekwencyjne wersje (używane tylko przez rank 0 do weryfikacji)
 template<typename T>
 T sequential_sum(const vector<T>& vector) {
     T sum = 0;
@@ -61,7 +63,6 @@ void compute_counts_displs(int N, int size, vector<int>& counts, vector<int>& di
 
     int base = N / size;
     int rest = N % size;
-    cout << "Base: " << base << ", Rest: " << rest << endl;
 
     for (int i = 0; i < size; i++)
         counts[i] = base + (i < rest ? 1 : 0);
@@ -75,26 +76,25 @@ void compute_counts_displs(int N, int size, vector<int>& counts, vector<int>& di
 // MPI SUMA
 // ==========================
 template <typename T>
-void mpi_sum(const vector<T>& full_vec, int rank, int size, const vector<int>& counts, const vector<int>& displs) {
+void mpi_sum(const vector<T>& full_vec, int rank, int size, const vector<int>& counts, const vector<int>& displs, MPI_Datatype datatype, const std::string& type_str, const std::string& power) {
     MPI_Barrier(MPI_COMM_WORLD);
     auto start = chrono::high_resolution_clock::now();
 
     vector<T> local_vec(counts[rank]);
-    MPI_Scatterv(full_vec.data(), counts.data(), displs.data(), MPI_LONG_LONG,
-                 local_vec.data(), counts[rank], MPI_LONG_LONG, 0, MPI_COMM_WORLD);
+    MPI_Scatterv(full_vec.data(), counts.data(), displs.data(), datatype,
+                 local_vec.data(), counts[rank], datatype, 0, MPI_COMM_WORLD);
 
     T local_sum = 0;
     for (auto& x : local_vec) local_sum += x;
 
     T global_sum = 0;
-    MPI_Allreduce(&local_sum, &global_sum, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&local_sum, &global_sum, 1, datatype, MPI_SUM, MPI_COMM_WORLD);
 
     MPI_Barrier(MPI_COMM_WORLD);
     auto end = chrono::high_resolution_clock::now();
     chrono::duration<double> duration = end - start;
 
     if (rank == 0) {
-        // SUMA - SEKWENCYJNIE
         const auto start_seq_sum = chrono::high_resolution_clock::now();
         auto seq_sum = sequential_sum(full_vec);
         const auto end_seq_sum = chrono::high_resolution_clock::now();
@@ -105,6 +105,17 @@ void mpi_sum(const vector<T>& full_vec, int rank, int size, const vector<int>& c
 
         cout << "[MPI] Sum of all elements is equal: " << global_sum << endl;
         cout << "[MPI] Execution time for sum reduction parallel method: " << duration.count() * 1000 << "ms" << endl << endl;
+
+        double abs_err = fabs(seq_sum - global_sum);
+        double rel_err = fabs(seq_sum) > 0 ? abs_err / fabs(seq_sum) : 0.0;
+        cout << "[MPI] Absolute error: " << abs_err << endl;
+        cout << "[MPI] Relative error: " << rel_err << endl << endl;
+
+        // --- Zapis do pliku ---
+        std::string filename = "../results/mpi/mpi_sum_" + type_str + ".csv";
+        std::ofstream fout(filename, std::ios::app);
+        fout << power << "," << size << "," << duration.count() * 1000 << "," << abs_err << "," << rel_err << std::endl;
+        fout.close();
     }
 }
 
@@ -112,19 +123,19 @@ void mpi_sum(const vector<T>& full_vec, int rank, int size, const vector<int>& c
 // MPI MIN
 // ==========================
 template <typename T>
-void mpi_min(const vector<T>& full_vec, int rank, int size, const vector<int>& counts, const vector<int>& displs) {
+void mpi_min(const vector<T>& full_vec, int rank, int size, const vector<int>& counts, const vector<int>& displs, MPI_Datatype datatype, const std::string& type_str, const std::string& power) {
     MPI_Barrier(MPI_COMM_WORLD);
     auto start = chrono::high_resolution_clock::now();
 
     vector<T> local_vec(counts[rank]);
-    MPI_Scatterv(full_vec.data(), counts.data(), displs.data(), MPI_LONG_LONG,
-                 local_vec.data(), counts[rank], MPI_LONG_LONG, 0, MPI_COMM_WORLD);
+    MPI_Scatterv(full_vec.data(), counts.data(), displs.data(), datatype,
+                 local_vec.data(), counts[rank], datatype, 0, MPI_COMM_WORLD);
 
     T local_min = numeric_limits<T>::max();
     for (auto& x : local_vec) local_min = min(local_min, x);
 
     T global_min = numeric_limits<T>::max();
-    MPI_Allreduce(&local_min, &global_min, 1, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
+    MPI_Allreduce(&local_min, &global_min, 1, datatype, MPI_MIN, MPI_COMM_WORLD);
 
     MPI_Barrier(MPI_COMM_WORLD);
     auto end = chrono::high_resolution_clock::now();
@@ -141,6 +152,16 @@ void mpi_min(const vector<T>& full_vec, int rank, int size, const vector<int>& c
 
         cout << "[MPI] Minumum element of all elements is equal: " << global_min << endl;
         cout << "[MPI] Execution time for min reduction parallel method: " << duration.count() * 1000 << "ms" << endl << endl;
+
+        double abs_err = fabs(seq_min - global_min);
+        double rel_err = fabs(seq_min) > 0 ? abs_err / fabs(seq_min) : 0.0;
+        cout << "[MPI] Absolute error: " << abs_err << endl;
+        cout << "[MPI] Relative error: " << rel_err << endl << endl;
+
+        std::string filename = "../results/mpi/mpi_min_" + type_str + ".csv";
+        std::ofstream fout(filename, std::ios::app);
+        fout << power << "," << size << "," << duration.count() * 1000 << "," << abs_err << "," << rel_err << std::endl;
+        fout.close();
     }
 }
 
@@ -148,19 +169,19 @@ void mpi_min(const vector<T>& full_vec, int rank, int size, const vector<int>& c
 // MPI MAX
 // ==========================
 template <typename T>
-void mpi_max(const vector<T>& full_vec, int rank, int size, const vector<int>& counts, const vector<int>& displs) {
+void mpi_max(const vector<T>& full_vec, int rank, int size, const vector<int>& counts, const vector<int>& displs, MPI_Datatype datatype, const std::string& type_str, const std::string& power) {
     MPI_Barrier(MPI_COMM_WORLD);
     auto start = chrono::high_resolution_clock::now();
 
     vector<T> local_vec(counts[rank]);
-    MPI_Scatterv(full_vec.data(), counts.data(), displs.data(), MPI_LONG_LONG,
-                 local_vec.data(), counts[rank], MPI_LONG_LONG, 0, MPI_COMM_WORLD);
+    MPI_Scatterv(full_vec.data(), counts.data(), displs.data(), datatype,
+                 local_vec.data(), counts[rank], datatype, 0, MPI_COMM_WORLD);
 
     T local_max = numeric_limits<T>::min();
     for (auto& x : local_vec) local_max = max(local_max, x);
 
     T global_max = numeric_limits<T>::min();
-    MPI_Allreduce(&local_max, &global_max, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(&local_max, &global_max, 1, datatype, MPI_MAX, MPI_COMM_WORLD);
 
     MPI_Barrier(MPI_COMM_WORLD);
     auto end = chrono::high_resolution_clock::now();
@@ -177,37 +198,39 @@ void mpi_max(const vector<T>& full_vec, int rank, int size, const vector<int>& c
 
         cout << "[MPI] Maximum element of all elements is equal: " << global_max << endl;
         cout << "[MPI] Execution time for max reduction parallel method: " << duration.count() * 1000 << "ms" << endl << endl;
+
+        double abs_err = fabs(seq_max - global_max);
+        double rel_err = fabs(seq_max) > 0 ? abs_err / fabs(seq_max) : 0.0;
+        cout << "[MPI] Absolute error: " << abs_err << endl;
+        cout << "[MPI] Relative error: " << rel_err << endl << endl;
+
+        std::string filename = "../results/mpi/mpi_max_" + type_str + ".csv";
+        std::ofstream fout(filename, std::ios::app);
+        fout << power << "," << size << "," << duration.count() * 1000 << "," << abs_err << "," << rel_err << std::endl;
+        fout.close();
     }
 }
 
 
-// ==========================
+ // ==========================
 // MPI PREFIX-SUM (exclusive scan)
 // ==========================
 template <typename T>
-void mpi_prefix_sum(const vector<T>& full_vec, int local_n, int rank, int size) {
+void mpi_prefix_sum(const vector<T>& full_vec, int local_n, int rank, int size, MPI_Datatype datatype, const std::string& type_str, const std::string& power) {
     MPI_Barrier(MPI_COMM_WORLD);
     auto start = chrono::high_resolution_clock::now();
 
     vector<T> local_data(local_n);
-    MPI_Scatter(full_vec.data(), local_n, MPI_LONG_LONG,
-                local_data.data(), local_n, MPI_LONG_LONG, 0, MPI_COMM_WORLD);
+    MPI_Scatter(full_vec.data(), local_n, datatype,
+                local_data.data(), local_n, datatype, 0, MPI_COMM_WORLD);
 
-    // 1. Lokalne sumy
+    // Lokalne sumy
     T local_sum = std::accumulate(local_data.begin(), local_data.end(), T(0));
 
-    // printf("Rank %d has local sum: %lld\n", rank, static_cast<long long>(local_sum));
-
-    // 2. Każdy proces zna swoją lokalną sumę
     std::vector<T> all_sums(size);
-    MPI_Allgather(&local_sum, 1, MPI_LONG_LONG, all_sums.data(), 1, MPI_LONG_LONG, MPI_COMM_WORLD);
+    MPI_Allgather(&local_sum, 1, datatype, all_sums.data(), 1, datatype, MPI_COMM_WORLD);
 
-    // cout <<"im here: " << rank <<endl;
-    // for (int i = 0; i < all_sums.size(); i++) {
-    //     cout << "all_sums[" << i << "] = " << all_sums[i] << endl;
-    // }
-
-    // 3. Oblicz offset prefiksowy dla każdego procesu
+    // Offset prefiksowy dla każdego procesu
     std::vector<T> prefix_sums(size);
     prefix_sums[0] = 0.0;
     for (int i = 1; i < size; ++i)
@@ -215,7 +238,7 @@ void mpi_prefix_sum(const vector<T>& full_vec, int local_n, int rank, int size) 
 
     T offset = prefix_sums[rank];
 
-    // 4. Wewnątrzprocesowy exclusive scan
+    // Wewnątrzprocesowy exclusive scan
     vector<T> local_scan(local_n);
     if (local_n > 0) {
         local_scan[0] = offset;
@@ -223,10 +246,9 @@ void mpi_prefix_sum(const vector<T>& full_vec, int local_n, int rank, int size) 
             local_scan[i] = local_scan[i - 1] + local_data[i - 1];
     }
 
-    // 5. (opcjonalnie) allgather – pełny wynik globalny
     vector<T> global_scan(size * local_n);
-    MPI_Allgather(local_scan.data(), local_n, MPI_LONG_LONG,
-                  global_scan.data(), local_n, MPI_LONG_LONG, MPI_COMM_WORLD);
+    MPI_Allgather(local_scan.data(), local_n, datatype,
+                  global_scan.data(), local_n, datatype, MPI_COMM_WORLD);
                 
     // local_data = std::move(local_scan);
     
@@ -242,10 +264,18 @@ void mpi_prefix_sum(const vector<T>& full_vec, int local_n, int rank, int size) 
         cout << "[SEQ] Execution time for exclusive prefix-sum: " << seq_time_scan.count() * 1000 << " ms" << endl;
         cout << "[MPI] Execution time for exclusive prefix-sum: " << duration.count() * 1000 << " ms" << endl;
 
-        for (size_t i = 0; i < 10 && i < global_scan.size(); i++) {
-            cout << "[MPI] global_scan[" << i << "] = " << global_scan[i]
-                 << ", [SEQ] seq_scan[" << i << "] = " << seq_scan[i] << endl;
+        double abs_err = 0.0, denom = 0.0;
+        for (size_t i = 0; i < seq_scan.size(); i++) {
+            abs_err += pow(seq_scan[i] - global_scan[i], 2);
+            denom += pow(seq_scan[i], 2);
         }
+        abs_err = sqrt(abs_err);
+        denom = sqrt(denom);
+        double rel_err = denom > 0 ? abs_err / denom : 0.0;
+        std::string filename = "../results/mpi/mpi_prefix_" + type_str + ".csv";
+        std::ofstream fout(filename, std::ios::app);
+        fout << power << "," << size << "," << duration.count() * 1000 << "," << abs_err << "," << rel_err << std::endl;
+        fout.close();
     }
 }
 
@@ -256,30 +286,74 @@ int main(int argc, char* argv[]) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    const size_t N = 1 << 25;
-
-    vector<int64_t> data;
-    if (rank == 0) {
-        data.resize(N);
-        mt19937_64 gen(1234);
-        uniform_int_distribution<int64_t> dist(0, 1000000);
-        for (auto& x : data) x = dist(gen);
-        cout << "Wektor o rozmiarze " << N << " elementów wygenerowany.\n\n";
-
-        // for (size_t i = 0; i < min(size_t(10), data.size()); i++) {
-        //     cout << "data[" << i << "] = " << data[i] << endl;
-        // }
+    if (argc < 3) {
+        if (rank == 0) {
+            cerr << "Usage: " << argv[0] << " <type: int|double> <operation: sum|min|max|prefix> [power]" << endl;
+        }
+        MPI_Finalize();
+        return 1;
     }
+    string type_str = argv[1] ? argv[1] : "double";
+    string op_str = argv[2] ? argv[2] : "sum";
+    string power = argv[3] ? argv[3] : "20";
 
-    vector<int> counts, displs;
-    compute_counts_displs(N, size, counts, displs);
+    const size_t N = 1 << stoi(power);
 
-    int local_n = N / size;
+    if (type_str == "int") {
+        vector<int64_t> data;
+        if (rank == 0) {
+            data.resize(N);
+            mt19937_64 gen(1234);
+            uniform_int_distribution<int64_t> dist(0, 1000000);
+            for (auto& x : data) x = dist(gen);
+            cout << "Wektor o rozmiarze " << N << " elementów wygenerowany.\n\n";
+        }
 
-    // mpi_sum<int64_t>(data, rank, size, counts, displs);
-    // mpi_min<int64_t>(data, rank, size, counts, displs);
-    // mpi_max<int64_t>(data, rank, size, counts, displs);
-    mpi_prefix_sum<int64_t>(data, local_n, rank, size);
+        vector<int> counts, displs;
+        compute_counts_displs(N, size, counts, displs);
+        int local_n = N / size;
+
+        if (op_str == "sum") {
+            mpi_sum<int64_t>(data, rank, size, counts, displs, MPI_LONG_LONG, "int", power);
+        } else if (op_str == "min") {
+            mpi_min<int64_t>(data, rank, size, counts, displs, MPI_LONG_LONG, "int", power);
+        } else if (op_str == "max") {
+            mpi_max<int64_t>(data, rank, size, counts, displs, MPI_LONG_LONG, "int", power);
+        } else if (op_str == "prefix") {
+            mpi_prefix_sum<int64_t>(data, local_n, rank, size, MPI_LONG_LONG, "int", power);
+        } else if (rank == 0) {
+            cerr << "Unknown operation: " << op_str << endl;
+        }
+    } else if (type_str == "double") {
+        vector<double> data;
+        if (rank == 0) {
+            data.resize(N);
+            mt19937_64 gen(1234);
+            uniform_real_distribution<double> dist(0.0, 1000000.0);
+            for (auto& x : data) x = dist(gen);
+            cout << "Wektor o rozmiarze " << N << " elementów wygenerowany.\n\n";
+        }
+
+        vector<int> counts, displs;
+        compute_counts_displs(N, size, counts, displs);
+        int local_n = N / size;
+
+        if (op_str == "sum") {
+            mpi_sum<double>(data, rank, size, counts, displs, MPI_DOUBLE, "double", power);
+        } else if (op_str == "min") {
+            mpi_min<double>(data, rank, size, counts, displs, MPI_DOUBLE, "double", power);
+        } else if (op_str == "max") {
+            mpi_max<double>(data, rank, size, counts, displs, MPI_DOUBLE, "double", power);
+        } else if (op_str == "prefix") {
+            mpi_prefix_sum<double>(data, local_n, rank, size, MPI_DOUBLE, "double", power);
+        } else if (rank == 0) {
+            cerr << "Unknown operation: " << op_str << endl;
+        }
+    } else {
+        if (rank == 0) {
+            cerr << "Unknown type: " << type_str << endl;
+        }
+    }
 
     MPI_Finalize();
     return 0;
