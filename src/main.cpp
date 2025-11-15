@@ -5,63 +5,16 @@
 #include <random>
 #include <chrono>
 #include <omp.h>
+#include "sequential.hpp"
+#include <fstream>
+#include <numeric>
+#include <cmath>
 
 #define THREADS 12
 
 using namespace std;
 
-// Implementacje sekwencyjne
-
-template<typename T>
-T sequential_sum(const vector<T>& in) {
-    T sum = 0;
-
-    for (auto& element : in) {
-        sum += element;
-    }
-
-    return sum;
-}
-
-template<typename T>
-T sequential_min(const vector<T>& in) {
-    T minimum = numeric_limits<T>::max();
-
-    for (auto& element : in) {
-        minimum = min(minimum, element);
-    }
-
-    return minimum;
-}
-
-template<typename T>
-T sequential_max(const vector<T>& in) {
-    T maximum = numeric_limits<T>::min();
-
-    for (auto& element : in) {
-        maximum = max(maximum, element);
-    }
-
-    return maximum;
-}
-
-template<typename T>
-vector<T> sequential_exclusive_scan(const vector<T>& in) {
-    size_t n = in.size();
-    if (n == 0) return {};
-
-    vector<T> result(n);
-    result[0] = 0;
-
-    for (size_t i = 1; i < n; i++)
-        result[i] = result[i - 1] + in[i - 1];
-
-    return result;
-}
-
-
 // Implementacje rownolegle
-
 template<typename T>
 T parallel_sum(const vector<T>& in) {
     T sum = 0;
@@ -130,101 +83,229 @@ void blelloch_scan(vector<T>& in) {
     }
 }
 
-int main() {
-    const size_t N = 1 << 24;
-    
-    vector<int64_t> input_vector(N);
+int main(int argc, char* argv[]) {
+    if (argc < 3) {
+        cerr << "Usage: " << argv[0] << " <type: int|double> <operation: sum|min|max|prefix> [power] [threads]" << endl;
+        return 1;
+    }
+    string type_str = argv[1] ? argv[1] : "double";
+    string op_str = argv[2] ? argv[2] : "sum";
+    string power = argv[3] ? argv[3] : "20";
+    string threads_arg = argv[4] ? argv[4] : to_string(THREADS);
 
-    random_device rd;
-    mt19937_64 gen(rd());
-    uniform_int_distribution<int64_t> dist(0, 1000000);
+    const size_t N = 1 << stoi(power);
 
-    for (auto &x : input_vector) x = dist(gen);
+    int threads = stoi(threads_arg);
+    omp_set_num_threads(threads);
 
+    if (type_str == "int") {
+        vector<int64_t> data(N);
+        mt19937_64 gen(1234);
+        uniform_int_distribution<int64_t> dist(0, 1000000);
+        for (auto &x : data) x = dist(gen);
 
-    cout << "=====================" << endl;
-    cout << "WYKONANIE SEKWENCYJNE" << endl;
-    cout << "=====================" << endl;
+        if (op_str == "sum") {
+            const auto t0 = chrono::high_resolution_clock::now();
+            auto seq = sequential_sum(data);
+            const auto t1 = chrono::high_resolution_clock::now();
+            chrono::duration<double> seq_time = t1 - t0;
 
-    
-    // SUMA - SEKWENCYJNIE
-    const auto start_seq_sum = chrono::high_resolution_clock::now();
-    auto seq_sum = sequential_sum(input_vector);
-    const auto end_seq_sum = chrono::high_resolution_clock::now();
-    chrono::duration<double> seq_time_sum = end_seq_sum - start_seq_sum;
+            const auto p0 = chrono::high_resolution_clock::now();
+            auto par = parallel_sum(data);
+            const auto p1 = chrono::high_resolution_clock::now();
+            chrono::duration<double> par_time = p1 - p0;
 
-    cout << "Sum of all elements is equal: " << seq_sum << endl;
-    cout << "Execution time for sum reduction sequential method: " << seq_time_sum.count() * 1000 << "ms" << endl << endl;
+            double abs_err = fabs((double)seq - (double)par);
+            double rel_err = fabs(seq) > 0 ? abs_err / fabs((double)seq) : 0.0;
 
-    
-    // MIN - SEKWENCYJNIE
-    const auto start_seq_min = chrono::high_resolution_clock::now();
-    auto seq_min = sequential_min(input_vector);
-    const auto end_seq_min = chrono::high_resolution_clock::now();
-    chrono::duration<double> seq_time_min = end_seq_min - start_seq_min;
+            cout << "[SEQ] Sum: " << seq << " time(ms): " << seq_time.count()*1000 << endl;
+            cout << "[PAR] Sum: " << par << " time(ms): " << par_time.count()*1000 << endl;
 
-    cout << "Minumum element of all elements is equal: " << seq_min << endl;
-    cout << "Execution time for min reduction sequential method: " << seq_time_min.count() * 1000 << "ms" << endl << endl;
+            string filename = "../results/openmp/openmp_sum_int.csv";
+            ofstream fout(filename, ios::app);
+            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << endl;
+            fout.close();
+        } else if (op_str == "min") {
+            const auto t0 = chrono::high_resolution_clock::now();
+            auto seq = sequential_min(data);
+            const auto t1 = chrono::high_resolution_clock::now();
+            chrono::duration<double> seq_time = t1 - t0;
 
-    
-    // MAX - SEKWENCYJNIE
-    const auto start_seq_max = chrono::high_resolution_clock::now();
-    auto seq_max = sequential_max(input_vector);
-    const auto end_seq_max = chrono::high_resolution_clock::now();
-    chrono::duration<double> seq_time_max = end_seq_max - start_seq_max;
+            const auto p0 = chrono::high_resolution_clock::now();
+            auto par = parallel_min(data);
+            const auto p1 = chrono::high_resolution_clock::now();
+            chrono::duration<double> par_time = p1 - p0;
 
-    cout << "Maximum element of all elements is equal: " << seq_max << endl;
-    cout << "Execution time for max reduction sequential method: " << seq_time_max.count() * 1000 << "ms" << endl << endl;
+            double abs_err = fabs((double)seq - (double)par);
+            double rel_err = fabs(seq) > 0 ? abs_err / fabs((double)seq) : 0.0;
 
-    // PREFIX-SUM - SEKWENCYJNIE
-    const auto start_seq_prefixsum = chrono::high_resolution_clock::now();
-    auto seq_prefixsum = sequential_exclusive_scan(input_vector);
-    const auto end_seq_prefixsum = chrono::high_resolution_clock::now();
-    chrono::duration<double> seq_time_prefixsum = end_seq_prefixsum - start_seq_prefixsum;
+            cout << "[SEQ] Min: " << seq << " time(ms): " << seq_time.count()*1000 << endl;
+            cout << "[PAR] Min: " << par << " time(ms): " << par_time.count()*1000 << endl;
 
-    cout << "Execution time for prefix-sum scan sequential method: " << seq_time_prefixsum.count() * 1000 << "ms" << endl << endl;
+            string filename = "../results/openmp/openmp_min_int.csv";
+            ofstream fout(filename, ios::app);
+            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << endl;
+            fout.close();
+        } else if (op_str == "max") {
+            const auto t0 = chrono::high_resolution_clock::now();
+            auto seq = sequential_max(data);
+            const auto t1 = chrono::high_resolution_clock::now();
+            chrono::duration<double> seq_time = t1 - t0;
 
+            const auto p0 = chrono::high_resolution_clock::now();
+            auto par = parallel_max(data);
+            const auto p1 = chrono::high_resolution_clock::now();
+            chrono::duration<double> par_time = p1 - p0;
 
-    cout << "====================" << endl;
-    cout << "WYKONANIE ROWNOLEGLE" << endl;
-    cout << "====================" << endl;
+            double abs_err = fabs((double)seq - (double)par);
+            double rel_err = fabs(seq) > 0 ? abs_err / fabs((double)seq) : 0.0;
 
-    // SUMA - ROWNOLEGLE
-    const auto start_par_sum = chrono::high_resolution_clock::now();
-    auto par_sum = parallel_sum(input_vector);
-    const auto end_par_sum = chrono::high_resolution_clock::now();
-    chrono::duration<double> par_time_sum = end_par_sum - start_par_sum;
+            cout << "[SEQ] Max: " << seq << " time(ms): " << seq_time.count()*1000 << endl;
+            cout << "[PAR] Max: " << par << " time(ms): " << par_time.count()*1000 << endl;
 
-    cout << "Sum of all elements is equal: " << par_sum << endl;
-    cout << "Execution time for sum reduction parallel method: " << par_time_sum.count() * 1000 << "ms" << endl << endl;
+            string filename = "../results/openmp/openmp_max_int.csv";
+            ofstream fout(filename, ios::app);
+            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << endl;
+            fout.close();
+        } else if (op_str == "prefix") {
+            const auto t0 = chrono::high_resolution_clock::now();
+            auto seq_scan = sequential_exclusive_scan(data);
+            const auto t1 = chrono::high_resolution_clock::now();
+            chrono::duration<double> seq_time = t1 - t0;
 
-    
-    // MIN - ROWNOLEGLE
-    const auto start_par_min = chrono::high_resolution_clock::now();
-    auto par_min = parallel_min(input_vector);
-    const auto end_par_min = chrono::high_resolution_clock::now();
-    chrono::duration<double> par_time_min = end_par_min - start_par_min;
+            vector<int64_t> par_data = data;
+            const auto p0 = chrono::high_resolution_clock::now();
+            blelloch_scan(par_data);
+            const auto p1 = chrono::high_resolution_clock::now();
+            chrono::duration<double> par_time = p1 - p0;
 
-    cout << "Sum of all elements is equal: " << par_min << endl;
-    cout << "Execution time for min reduction parallel method: " << par_time_min.count() * 1000 << "ms" << endl << endl;
+            double err_sq = 0.0, denom_sq = 0.0;
+            for (size_t i = 0; i < seq_scan.size(); ++i) {
+                double d = (double)seq_scan[i] - (double)par_data[i];
+                err_sq += d*d;
+                denom_sq += ((double)seq_scan[i])*((double)seq_scan[i]);
+            }
+            double abs_err = sqrt(err_sq);
+            double denom = sqrt(denom_sq);
+            double rel_err = denom > 0 ? abs_err / denom : 0.0;
 
-    
-    // MAX - ROWNOLEGLE
-    const auto start_par_max = chrono::high_resolution_clock::now();
-    auto par_max = parallel_max(input_vector);
-    const auto end_par_max = chrono::high_resolution_clock::now();
-    chrono::duration<double> par_time_max = end_par_max - start_par_max;
+            cout << "[SEQ] Prefix time(ms): " << seq_time.count()*1000 << endl;
+            cout << "[PAR] Prefix time(ms): " << par_time.count()*1000 << endl;
 
-    cout << "Sum of all elements is equal: " << par_max << endl;
-    cout << "Execution time for max reduction parallel method: " << par_time_max.count() * 1000 << "ms" << endl << endl;
+            string filename = "../results/openmp/openmp_prefix_int.csv";
+            ofstream fout(filename, ios::app);
+            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << endl;
+            fout.close();
+        } else {
+            cerr << "Unknown operation: " << op_str << endl;
+            return 1;
+        }
+    } else if (type_str == "double") {
+        vector<double> data(N);
+        mt19937_64 gen(1234);
+        uniform_real_distribution<double> dist(0.0, 1000000.0);
+        for (auto &x : data) x = dist(gen);
 
-    // PREFIX-SUM - ROWNOLEGLE
-    const auto start_par_prefixsum = chrono::high_resolution_clock::now();
-    blelloch_scan(input_vector);
-    const auto end_par_prefixsum = chrono::high_resolution_clock::now();
-    chrono::duration<double> par_time_prefixsum = end_par_prefixsum - start_par_prefixsum;
+        if (op_str == "sum") {
+            const auto t0 = chrono::high_resolution_clock::now();
+            auto seq = sequential_sum(data);
+            const auto t1 = chrono::high_resolution_clock::now();
+            chrono::duration<double> seq_time = t1 - t0;
 
-    cout << "Execution time for prefix-sum scan parallel method: " << par_time_prefixsum.count() * 1000 << "ms" << endl;
+            const auto p0 = chrono::high_resolution_clock::now();
+            auto par = parallel_sum(data);
+            const auto p1 = chrono::high_resolution_clock::now();
+            chrono::duration<double> par_time = p1 - p0;
+
+            double abs_err = fabs(seq - par);
+            double rel_err = fabs(seq) > 0 ? abs_err / fabs(seq) : 0.0;
+
+            cout << "[SEQ] Sum: " << seq << " time(ms): " << seq_time.count()*1000 << endl;
+            cout << "[PAR] Sum: " << par << " time(ms): " << par_time.count()*1000 << endl;
+
+            string filename = "../results/openmp/openmp_sum_double.csv";
+            ofstream fout(filename, ios::app);
+            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << endl;
+            fout.close();
+        } else if (op_str == "min") {
+            const auto t0 = chrono::high_resolution_clock::now();
+            auto seq = sequential_min(data);
+            const auto t1 = chrono::high_resolution_clock::now();
+            chrono::duration<double> seq_time = t1 - t0;
+
+            const auto p0 = chrono::high_resolution_clock::now();
+            auto par = parallel_min(data);
+            const auto p1 = chrono::high_resolution_clock::now();
+            chrono::duration<double> par_time = p1 - p0;
+
+            double abs_err = fabs(seq - par);
+            double rel_err = fabs(seq) > 0 ? abs_err / fabs(seq) : 0.0;
+
+            cout << "[SEQ] Min: " << seq << " time(ms): " << seq_time.count()*1000 << endl;
+            cout << "[PAR] Min: " << par << " time(ms): " << par_time.count()*1000 << endl;
+
+            string filename = "../results/openmp/openmp_min_double.csv";
+            ofstream fout(filename, ios::app);
+            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << endl;
+            fout.close();
+        } else if (op_str == "max") {
+            const auto t0 = chrono::high_resolution_clock::now();
+            auto seq = sequential_max(data);
+            const auto t1 = chrono::high_resolution_clock::now();
+            chrono::duration<double> seq_time = t1 - t0;
+
+            const auto p0 = chrono::high_resolution_clock::now();
+            auto par = parallel_max(data);
+            const auto p1 = chrono::high_resolution_clock::now();
+            chrono::duration<double> par_time = p1 - p0;
+
+            double abs_err = fabs(seq - par);
+            double rel_err = fabs(seq) > 0 ? abs_err / fabs(seq) : 0.0;
+
+            cout << "[SEQ] Max: " << seq << " time(ms): " << seq_time.count()*1000 << endl;
+            cout << "[PAR] Max: " << par << " time(ms): " << par_time.count()*1000 << endl;
+
+            string filename = "../results/openmp/openmp_max_double.csv";
+            ofstream fout(filename, ios::app);
+            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << endl;
+            fout.close();
+        } else if (op_str == "prefix") {
+            const auto t0 = chrono::high_resolution_clock::now();
+            auto seq_scan = sequential_exclusive_scan(data);
+            const auto t1 = chrono::high_resolution_clock::now();
+            chrono::duration<double> seq_time = t1 - t0;
+
+            vector<double> par_data = data;
+            const auto p0 = chrono::high_resolution_clock::now();
+            blelloch_scan(par_data);
+            const auto p1 = chrono::high_resolution_clock::now();
+            chrono::duration<double> par_time = p1 - p0;
+
+            double err_sq = 0.0, denom_sq = 0.0;
+            for (size_t i = 0; i < seq_scan.size(); ++i) {
+                double d = seq_scan[i] - par_data[i];
+                err_sq += d*d;
+                denom_sq += seq_scan[i]*seq_scan[i];
+            }
+            double abs_err = sqrt(err_sq);
+            double denom = sqrt(denom_sq);
+            double rel_err = denom > 0 ? abs_err / denom : 0.0;
+
+            cout << "[SEQ] Prefix time(ms): " << seq_time.count()*1000 << endl;
+            cout << "[PAR] Prefix time(ms): " << par_time.count()*1000 << endl;
+
+            string filename = "../results/openmp/openmp_prefix_double.csv";
+            ofstream fout(filename, ios::app);
+            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << endl;
+            fout.close();
+        } else {
+            cerr << "Unknown operation: " << op_str << endl;
+            return 1;
+        }
+    } else {
+        cerr << "Unknown type: " << type_str << endl;
+        return 1;
+    }
 
     return 0;
 }

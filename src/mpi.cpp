@@ -8,54 +8,9 @@
 #include <fstream>
 #include <cmath>
 #include <string>
+#include "sequential.hpp"
 
 using namespace std;
-
-template<typename T>
-T sequential_sum(const vector<T>& vector) {
-    T sum = 0;
-    for (auto& element : vector) {
-        sum += element;
-    }
-
-    return sum;
-}
-
-template<typename T>
-T sequential_min(const vector<T>& vector) {
-    T minimum = numeric_limits<T>::max();
-
-    for (auto& element : vector) {
-        minimum = min(minimum, element);
-    }
-
-    return minimum;
-}
-
-template<typename T>
-T sequential_max(const vector<T>& vector) {
-    T maximum = numeric_limits<T>::min();
-
-    for (auto& element : vector) {
-        maximum = max(maximum, element);
-    }
-
-    return maximum;
-}
-
-template<typename T>
-vector<T> sequential_exclusive_scan(const vector<T>& in) {
-    size_t n = in.size();
-    if (n == 0) return {};
-
-    vector<T> result(n);
-    result[0] = 0;
-
-    for (size_t i = 1; i < n; i++)
-        result[i] = result[i - 1] + in[i - 1];
-
-    return result;
-}
 
 void compute_counts_displs(int N, int size, vector<int>& counts, vector<int>& displs) {
     counts.resize(size);
