@@ -9,6 +9,8 @@
 #include <cmath>
 #include <string>
 #include "sequential.hpp"
+#include <unistd.h>
+
 
 using namespace std;
 
@@ -32,22 +34,22 @@ void compute_counts_displs(int N, int size, vector<int>& counts, vector<int>& di
 // ==========================
 template <typename T>
 void mpi_sum(const vector<T>& full_vec, int rank, int size, const vector<int>& counts, const vector<int>& displs, MPI_Datatype datatype, const std::string& type_str, const std::string& power) {
-    MPI_Barrier(MPI_COMM_WORLD);
-    auto start = chrono::high_resolution_clock::now();
+        MPI_Barrier(MPI_COMM_WORLD);
+        auto start = chrono::high_resolution_clock::now();
 
-    vector<T> local_vec(counts[rank]);
-    MPI_Scatterv(full_vec.data(), counts.data(), displs.data(), datatype,
-                 local_vec.data(), counts[rank], datatype, 0, MPI_COMM_WORLD);
+        vector<T> local_vec(counts[rank]);
+        MPI_Scatterv(full_vec.data(), counts.data(), displs.data(), datatype,
+                    local_vec.data(), counts[rank], datatype, 0, MPI_COMM_WORLD);
 
-    T local_sum = 0;
-    for (auto& x : local_vec) local_sum += x;
+        T local_sum = 0;
+        for (auto& x : local_vec) local_sum += x;
 
-    T global_sum = 0;
-    MPI_Allreduce(&local_sum, &global_sum, 1, datatype, MPI_SUM, MPI_COMM_WORLD);
+        T global_sum = 0;
+        MPI_Allreduce(&local_sum, &global_sum, 1, datatype, MPI_SUM, MPI_COMM_WORLD);
 
-    MPI_Barrier(MPI_COMM_WORLD);
-    auto end = chrono::high_resolution_clock::now();
-    chrono::duration<double> duration = end - start;
+        MPI_Barrier(MPI_COMM_WORLD);
+        auto end = chrono::high_resolution_clock::now();
+        chrono::duration<double> duration = end - start;
 
     if (rank == 0) {
         const auto start_seq_sum = chrono::high_resolution_clock::now();
