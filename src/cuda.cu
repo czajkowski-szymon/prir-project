@@ -123,73 +123,6 @@ __global__ void max_reduce_double(double* g_idata, double* g_odata, size_t N, do
     if (tid == 0) g_odata[blockIdx.x] = sdata_max_double[0];
 }
 
-// ------------------------- KERNEL PREFIX-SUM -------------------------
-__global__ void prefix_sum_block_int64(int64_t* g_idata, int64_t* g_odata, size_t n) {
-    extern __shared__ int64_t sdata_scan_int64[];
-
-    unsigned int tid = threadIdx.x;
-    unsigned int i = blockIdx.x * blockDim.x + tid;
-
-    sdata_scan_int64[tid] = (i < n) ? g_idata[i] : 0;
-    __syncthreads();
-
-    for (unsigned int offset = 1; offset < blockDim.x; offset <<= 1) {
-        int idx = (tid + 1) * offset * 2 - 1;
-        if (idx < blockDim.x)
-            sdata_scan_int64[idx] += sdata_scan_int64[idx - offset];
-        __syncthreads();
-    }
-
-    if (tid == 0) sdata_scan_int64[blockDim.x - 1] = 0;
-    __syncthreads();
-
-    for (int offset = blockDim.x >> 1; offset > 0; offset >>= 1) {
-        int idx = (tid + 1) * offset * 2 - 1;
-        if (idx < blockDim.x) {
-            int64_t t = sdata_scan_int64[idx - offset];
-            sdata_scan_int64[idx - offset] = sdata_scan_int64[idx];
-            sdata_scan_int64[idx] += t;
-        }
-        __syncthreads();
-    }
-
-    if (i < n)
-        g_odata[i] = sdata_scan_int64[tid];
-}
-
-__global__ void prefix_sum_block_double(double* g_idata, double* g_odata, size_t n) {
-    extern __shared__ double sdata_scan_double[];
-
-    unsigned int tid = threadIdx.x;
-    unsigned int i = blockIdx.x * blockDim.x + tid;
-
-    sdata_scan_double[tid] = (i < n) ? g_idata[i] : 0;
-    __syncthreads();
-
-    for (unsigned int offset = 1; offset < blockDim.x; offset <<= 1) {
-        int idx = (tid + 1) * offset * 2 - 1;
-        if (idx < blockDim.x)
-            sdata_scan_double[idx] += sdata_scan_double[idx - offset];
-        __syncthreads();
-    }
-
-    if (tid == 0) sdata_scan_double[blockDim.x - 1] = 0;
-    __syncthreads();
-
-    for (int offset = blockDim.x >> 1; offset > 0; offset >>= 1) {
-        int idx = (tid + 1) * offset * 2 - 1;
-        if (idx < blockDim.x) {
-            double t = sdata_scan_double[idx - offset];
-            sdata_scan_double[idx - offset] = sdata_scan_double[idx];
-            sdata_scan_double[idx] += t;
-        }
-        __syncthreads();
-    }
-
-    if (i < n)
-        g_odata[i] = sdata_scan_double[tid];
-}
-
 // --------------------- HOST SUM --------------------
 int64_t gpu_sum_int64(const std::vector<int64_t>& h_data, int block_size, float& time) {
     size_t N = h_data.size();
@@ -493,73 +426,107 @@ double gpu_max_double(const std::vector<double>& h_data, int block_size, float& 
     return result;
 }
 
-// ------------------------- HOST PREFIX-SUM -------------------------
-void gpu_prefix_sum_int64(std::vector<int64_t>& h_data, int block_size, float& time) {
-    size_t N = h_data.size();
-    int64_t *d_in, *d_out;
-    cudaMalloc(&d_in, N * sizeof(int64_t));
-    cudaMalloc(&d_out, N * sizeof(int64_t));
-    cudaMemcpy(d_in, h_data.data(), N * sizeof(int64_t), cudaMemcpyHostToDevice);
-
-    size_t num_blocks = (N + block_size - 1) / block_size;
-    size_t shared_mem = block_size * sizeof(int64_t);
-
-    float elapsed_ms = 0.0f;
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-    cudaEventRecord(start);
-
-    prefix_sum_block_int64<<<num_blocks, block_size, shared_mem>>>(d_in, d_out, N);
-    cudaDeviceSynchronize();
-
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
-    cudaEventElapsedTime(&elapsed_ms, start, stop);
-
-    time = elapsed_ms;
-
-    cudaEventDestroy(start);
-    cudaEventDestroy(stop);
-
-    cudaMemcpy(h_data.data(), d_out, N * sizeof(int64_t), cudaMemcpyDeviceToHost);
-
-    cudaFree(d_in);
-    cudaFree(d_out);
+__global__ void upsweep_kernel_int(int64_t *data, size_t n, size_t offset, size_t step) {
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t j = step - 1 + idx * step;
+    if (j < n) {
+        data[j] += data[j - offset];
+    }
 }
 
-void gpu_prefix_sum_double(std::vector<double>& h_data, int block_size, float& time) {
-    size_t N = h_data.size();
-    double *d_in, *d_out;
-    cudaMalloc(&d_in, N * sizeof(double));
-    cudaMalloc(&d_out, N * sizeof(double));
-    cudaMemcpy(d_in, h_data.data(), N * sizeof(double), cudaMemcpyHostToDevice);
+__global__ void downsweep_kernel_int(int64_t *data, size_t n, size_t offset, size_t step) {
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t j = step - 1 + idx * step;
+    if (j < n) {
+        int64_t t = data[j - offset];
+        data[j - offset] = data[j];
+        data[j] += t;
+    }
+}
 
-    size_t num_blocks = (N + block_size - 1) / block_size;
-    size_t shared_mem = block_size * sizeof(double);
+void blelloch_scan_int(int64_t *d_data, int block_size, size_t N) {
+    if (N == 0) return;
 
-    float elapsed_ms = 0.0f;
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-    cudaEventRecord(start);
+    size_t levels = (size_t)log2((double)N);
 
-    prefix_sum_block_double<<<num_blocks, block_size, shared_mem>>>(d_in, d_out, N);
-    cudaDeviceSynchronize();
+    for (size_t i = 0; i < levels; i++) {
+        size_t step   = 1ULL << (i + 1);
+        size_t offset = 1ULL << i;
 
-    cudaEventRecord(stop);
-    cudaEventSynchronize(stop);
-    cudaEventElapsedTime(&elapsed_ms, start, stop);
+        size_t tasks = N / step;
+        if (tasks == 0) continue;
 
-    time = elapsed_ms;
+        size_t blocks = (tasks + block_size - 1) / block_size;
 
-    cudaEventDestroy(start);
-    cudaEventDestroy(stop);
+        upsweep_kernel_int<<<blocks, block_size>>>(d_data, N, offset, step);
+        cudaDeviceSynchronize();
+    }
 
-    cudaMemcpy(h_data.data(), d_out, N * sizeof(double), cudaMemcpyDeviceToHost);
+    cudaMemset(d_data + (N - 1), 0, sizeof(int64_t));
 
-    cudaFree(d_in);
-    cudaFree(d_out);
+    for (int i = levels - 1; i >= 0; i--) {
+        size_t step   = 1ULL << (i + 1);
+        size_t offset = 1ULL << i;
+
+        size_t tasks = N / step;
+        if (tasks == 0) continue;
+
+        size_t blocks = (tasks + block_size - 1) / block_size;
+
+        downsweep_kernel_int<<<blocks, block_size>>>(d_data, N, offset, step);
+        cudaDeviceSynchronize();
+    }
+}
+
+__global__ void upsweep_kernel_double(double* data, size_t n, size_t offset, size_t step) {
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t j = step - 1 + idx * step;
+    if (j < n) {
+        data[j] += data[j - offset];
+    }
+}
+
+__global__ void downsweep_kernel_double(double* data, size_t n, size_t offset, size_t step) {
+    size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    size_t j = step - 1 + idx * step;
+    if (j < n) {
+        double t = data[j - offset];
+        data[j - offset] = data[j];
+        data[j] += t;
+    }
+}
+
+void blelloch_scan_double(double* d_data, int block_size, size_t N) {
+    if (N == 0) return;
+    size_t levels = (size_t)log2((double)N);
+
+    for (size_t i = 0; i < levels; i++) {
+        size_t step   = 1ULL << (i + 1);
+        size_t offset = 1ULL << i;
+
+        size_t tasks = N / step;
+        if (tasks == 0) continue;
+
+        size_t blocks = (tasks + block_size - 1) / block_size;
+
+        upsweep_kernel_double<<<blocks, block_size>>>(d_data, N, offset, step);
+        cudaDeviceSynchronize();
+    }
+
+    cudaMemset(d_data + (N - 1), 0, sizeof(double));
+
+    for (int i = levels - 1; i >= 0; i--) {
+        size_t step   = 1ULL << (i + 1);
+        size_t offset = 1ULL << i;
+
+        size_t tasks = N / step;
+        if (tasks == 0) continue;
+
+        size_t blocks = (tasks + block_size - 1) / block_size;
+
+        downsweep_kernel_double<<<blocks, block_size>>>(d_data, N, offset, step);
+        cudaDeviceSynchronize();
+    }
 }
 
 int main(int argc, char* argv[]) {
@@ -633,8 +600,26 @@ int main(int argc, char* argv[]) {
         } else if (op_str == "prefix") {            
             auto seq = sequential_exclusive_scan(h_data);
 
-            float time;
-            gpu_prefix_sum_int64(h_data, block_size, time);
+            int64_t *d_data = nullptr;
+            cudaMalloc(&d_data, SIZE * sizeof(int64_t));
+            cudaMemcpy(d_data, h_data.data(), SIZE * sizeof(int64_t), cudaMemcpyHostToDevice);
+            
+            float time = 0.0f;
+            cudaEvent_t start, stop;
+            cudaEventCreate(&start);
+            cudaEventCreate(&stop);
+            cudaEventRecord(start);
+
+            blelloch_scan_int(d_data, block_size, SIZE);
+
+            cudaEventRecord(stop);
+            cudaEventSynchronize(stop);
+            cudaEventElapsedTime(&time, start, stop);
+
+            cudaEventDestroy(start);
+            cudaEventDestroy(stop);
+
+            cudaMemcpy(h_data.data(), d_data, SIZE * sizeof(int64_t), cudaMemcpyDeviceToHost);
 
             double err_sq = 0.0, denom_sq = 0.0;
             for (size_t i = 0; i < seq.size(); ++i) {
@@ -648,7 +633,7 @@ int main(int argc, char* argv[]) {
         
             std::cout << "[PAR] Prefix time(ms): " << time << std::endl;
 
-            std::string filename = "../results/cuda/cuda_prefix_double.csv";
+            std::string filename = "../results/cuda/cuda_prefix_int.csv";
             std::ofstream fout(filename, std::ios::app);
             fout << power << "," << block_size << "," << time << "," << abs_err << "," << rel_err << std::endl;
             fout.close();
@@ -711,13 +696,28 @@ int main(int argc, char* argv[]) {
             fout << power << "," << block_size << "," << time << "," << abs_err << "," << rel_err << std::endl;
             fout.close();
         } else if (op_str == "prefix") {
-            for (int i = 0; i < 50; i++) std::cout << h_data[i] << " ";
-            std::cout << std::endl;
-
             auto seq = sequential_exclusive_scan(h_data);
 
-            float time;
-            gpu_prefix_sum_double(h_data, block_size, time);
+            double *d_data = nullptr;
+            cudaMalloc(&d_data, SIZE * sizeof(double));
+            cudaMemcpy(d_data, h_data.data(), SIZE * sizeof(double), cudaMemcpyHostToDevice);
+            
+            float time = 0.0f;
+            cudaEvent_t start, stop;
+            cudaEventCreate(&start);
+            cudaEventCreate(&stop);
+            cudaEventRecord(start);
+
+            blelloch_scan_double(d_data, block_size, SIZE);
+
+            cudaEventRecord(stop);
+            cudaEventSynchronize(stop);
+            cudaEventElapsedTime(&time, start, stop);
+
+            cudaEventDestroy(start);
+            cudaEventDestroy(stop);
+
+            cudaMemcpy(h_data.data(), d_data, SIZE * sizeof(double), cudaMemcpyDeviceToHost);
 
             double err_sq = 0.0, denom_sq = 0.0;
             for (size_t i = 0; i < seq.size(); ++i) {
