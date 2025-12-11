@@ -9,8 +9,6 @@
 #include <cmath>
 #include <string>
 #include "sequential.hpp"
-#include <unistd.h>
-
 
 using namespace std;
 
