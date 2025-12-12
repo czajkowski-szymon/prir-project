@@ -19,7 +19,8 @@ template<typename T>
 T parallel_sum(const vector<T>& in) {
     T sum = 0;
 
-    #pragma omp parallel for reduction(+:sum)
+    // #pragma omp parallel for reduction(+:sum)
+    #pragma omp parallel for reduction(+:sum) schedule(runtime)
     for (auto& element : in) {
         sum += element;
     }
@@ -31,7 +32,8 @@ template<typename T>
 T parallel_min(const vector<T>& in) {
     T minimum = numeric_limits<T>::max();
 
-    #pragma omp parallel for reduction(min:minimum)
+    // #pragma omp parallel for reduction(min:minimum)
+    #pragma omp parallel for reduction(min:minimum) schedule(runtime)
     for (auto& element : in) {
         minimum = min(minimum, element);
     }
@@ -43,7 +45,8 @@ template<typename T>
 T parallel_max(const vector<T>& in) {
     T maximum = numeric_limits<T>::min();
 
-    #pragma omp parallel for reduction(max:maximum)
+    // #pragma omp parallel for reduction(max:maximum)
+    #pragma omp parallel for reduction(max:maximum) schedule(runtime)
     for (auto& element : in) {
         maximum = max(maximum, element);
     }
@@ -62,7 +65,8 @@ void blelloch_scan(vector<T>& in) {
         size_t step = 1 << (i + 1);
         size_t offset = 1 << i;
 
-        #pragma omp parallel for schedule(static)
+        // #pragma omp parallel for schedule(static)
+        #pragma omp parallel for schedule(runtime)
         for (size_t j = step - 1; j < N; j += step) {
             in[j] += in[j - offset];
         }
@@ -74,7 +78,8 @@ void blelloch_scan(vector<T>& in) {
         size_t step = 1 << (i + 1);
         size_t offset = 1 << i;
 
-        #pragma omp parallel for schedule(static)
+        // #pragma omp parallel for schedule(static)
+        #pragma omp parallel for schedule(runtime)
         for (size_t j = step - 1; j < N; j += step) {
             T temp = in[j - offset];
             in[j - offset] = in[j];
@@ -85,18 +90,21 @@ void blelloch_scan(vector<T>& in) {
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
-        cerr << "Usage: " << argv[0] << " <type: int|double> <operation: sum|min|max|prefix> [power] [threads]" << endl;
+        cerr << "Usage: " << argv[0] << " <type: int|double> <operation: sum|min|max|prefix> [power] [threads] [chunk]" << endl;
         return 1;
     }
     string type_str = argv[1] ? argv[1] : "double";
     string op_str = argv[2] ? argv[2] : "sum";
     string power = argv[3] ? argv[3] : "20";
     string threads_arg = argv[4] ? argv[4] : to_string(THREADS);
+    string chunk_arg = argv[5] ? argv[5] : "1";
 
     const size_t N = 1 << stoi(power);
 
     int threads = stoi(threads_arg);
+    int chunk = stoi(chunk_arg);
     omp_set_num_threads(threads);
+    omp_set_schedule(omp_sched_static, chunk);
 
     if (type_str == "int") {
         vector<int64_t> data(N);
@@ -120,10 +128,13 @@ int main(int argc, char* argv[]) {
 
             cout << "[SEQ] Sum: " << seq << " time(ms): " << seq_time.count()*1000 << endl;
             cout << "[PAR] Sum: " << par << " time(ms): " << par_time.count()*1000 << endl;
+            cout << "[CONFIG] threads=" << threads << " chunk=" << chunk << endl;
 
-            string filename = "../results/openmp/openmp_sum_int.csv";
+            // string filename = "../results/openmp/openmp_sum_int.csv";
+            string filename = "../results/openmp/chunks/openmp_sum_int.csv";
+
             ofstream fout(filename, ios::app);
-            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << endl;
+            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << "," << chunk << endl;
             fout.close();
         } else if (op_str == "min") {
             const auto t0 = chrono::high_resolution_clock::now();
@@ -141,10 +152,13 @@ int main(int argc, char* argv[]) {
 
             cout << "[SEQ] Min: " << seq << " time(ms): " << seq_time.count()*1000 << endl;
             cout << "[PAR] Min: " << par << " time(ms): " << par_time.count()*1000 << endl;
+            cout << "[CONFIG] threads=" << threads << " chunk=" << chunk << endl;
 
-            string filename = "../results/openmp/openmp_min_int.csv";
+            // string filename = "../results/openmp/openmp_min_int.csv";
+            string filename = "../results/openmp/chunks/openmp_min_int.csv";
+
             ofstream fout(filename, ios::app);
-            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << endl;
+            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << "," << chunk << endl;
             fout.close();
         } else if (op_str == "max") {
             const auto t0 = chrono::high_resolution_clock::now();
@@ -162,10 +176,13 @@ int main(int argc, char* argv[]) {
 
             cout << "[SEQ] Max: " << seq << " time(ms): " << seq_time.count()*1000 << endl;
             cout << "[PAR] Max: " << par << " time(ms): " << par_time.count()*1000 << endl;
+            cout << "[CONFIG] threads=" << threads << " chunk=" << chunk << endl;
 
-            string filename = "../results/openmp/openmp_max_int.csv";
+            // string filename = "../results/openmp/openmp_max_int.csv";
+            string filename = "../results/openmp/chunks/openmp_max_int.csv";
+
             ofstream fout(filename, ios::app);
-            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << endl;
+            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << "," << chunk << endl;
             fout.close();
         } else if (op_str == "prefix") {
             const auto t0 = chrono::high_resolution_clock::now();
@@ -191,10 +208,13 @@ int main(int argc, char* argv[]) {
 
             cout << "[SEQ] Prefix time(ms): " << seq_time.count()*1000 << endl;
             cout << "[PAR] Prefix time(ms): " << par_time.count()*1000 << endl;
+            cout << "[CONFIG] threads=" << threads << " chunk=" << chunk << endl;
 
-            string filename = "../results/openmp/openmp_prefix_int.csv";
+            // string filename = "../results/openmp/openmp_prefix_int.csv";
+            string filename = "../results/openmp/chunks/openmp_prefix_int.csv";
+
             ofstream fout(filename, ios::app);
-            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << endl;
+            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << "," << chunk << endl;
             fout.close();
         } else {
             cerr << "Unknown operation: " << op_str << endl;
@@ -222,10 +242,13 @@ int main(int argc, char* argv[]) {
 
             cout << "[SEQ] Sum: " << seq << " time(ms): " << seq_time.count()*1000 << endl;
             cout << "[PAR] Sum: " << par << " time(ms): " << par_time.count()*1000 << endl;
+            cout << "[CONFIG] threads=" << threads << " chunk=" << chunk << endl;
 
-            string filename = "../results/openmp/openmp_sum_double.csv";
+            // string filename = "../results/openmp/openmp_sum_double.csv";
+            string filename = "../results/openmp/chunks/openmp_sum_double.csv";
+
             ofstream fout(filename, ios::app);
-            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << endl;
+            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << "," << chunk << endl;
             fout.close();
         } else if (op_str == "min") {
             const auto t0 = chrono::high_resolution_clock::now();
@@ -243,10 +266,13 @@ int main(int argc, char* argv[]) {
 
             cout << "[SEQ] Min: " << seq << " time(ms): " << seq_time.count()*1000 << endl;
             cout << "[PAR] Min: " << par << " time(ms): " << par_time.count()*1000 << endl;
+            cout << "[CONFIG] threads=" << threads << " chunk=" << chunk << endl;
 
-            string filename = "../results/openmp/openmp_min_double.csv";
+            // string filename = "../results/openmp/openmp_min_double.csv";
+            string filename = "../results/openmp/chunks/openmp_min_double.csv";
+
             ofstream fout(filename, ios::app);
-            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << endl;
+            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << "," << chunk << endl;
             fout.close();
         } else if (op_str == "max") {
             const auto t0 = chrono::high_resolution_clock::now();
@@ -264,10 +290,13 @@ int main(int argc, char* argv[]) {
 
             cout << "[SEQ] Max: " << seq << " time(ms): " << seq_time.count()*1000 << endl;
             cout << "[PAR] Max: " << par << " time(ms): " << par_time.count()*1000 << endl;
+            cout << "[CONFIG] threads=" << threads << " chunk=" << chunk << endl;
 
-            string filename = "../results/openmp/openmp_max_double.csv";
+            // string filename = "../results/openmp/openmp_max_double.csv";
+            string filename = "../results/openmp/chunks/openmp_max_double.csv";
+
             ofstream fout(filename, ios::app);
-            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << endl;
+            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << "," << chunk << endl;
             fout.close();
         } else if (op_str == "prefix") {
             const auto t0 = chrono::high_resolution_clock::now();
@@ -293,10 +322,13 @@ int main(int argc, char* argv[]) {
 
             cout << "[SEQ] Prefix time(ms): " << seq_time.count()*1000 << endl;
             cout << "[PAR] Prefix time(ms): " << par_time.count()*1000 << endl;
+            cout << "[CONFIG] threads=" << threads << " chunk=" << chunk << endl;
 
-            string filename = "../results/openmp/openmp_prefix_double.csv";
+            // string filename = "../results/openmp/openmp_prefix_double.csv";
+            string filename = "../results/openmp/chunks/openmp_prefix_double.csv";
+
             ofstream fout(filename, ios::app);
-            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << endl;
+            fout << power << "," << threads << "," << par_time.count()*1000 << "," << abs_err << "," << rel_err << "," << chunk << endl;
             fout.close();
         } else {
             cerr << "Unknown operation: " << op_str << endl;
